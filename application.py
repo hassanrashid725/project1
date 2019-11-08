@@ -22,11 +22,18 @@ db = scoped_session(sessionmaker(bind=engine))
 
 @app.route("/",methods=["POST","GET"])
 def index():
-    if request.method=="GET":
-        error=""
+    if request.method=="GET":   #Login Page
+        if session.get("login_success") == 1:
+            return redirect("/home")
+
+        if session.get("invalid_cred") is None:
+            error=""
+        elif session["invalid_cred"] == 1:
+            error = "Invalid Email or Password"
+            session["invalid_cred"] = None
         return render_template ("index.html",error=error)
 
-    elif request.method=="POST":
+    elif request.method=="POST":    #Security Code Page
         session["keycode2"] = request.form.get("securitykey")
         while session["keycode"] != session["keycode2"]:
             error="Security Code is incorrect. Please try again."
@@ -41,7 +48,11 @@ def index():
 @app.route("/home",methods=["POST","GET"])
 def home():
     if request.method=="GET":
-        return redirect("/")
+        if session.get("login_success") is None:
+            return redirect("/")
+        elif session["login_success"] == 1:
+            session["books"]=db.execute("SELECT * FROM books ORDER BY title asc LIMIT 20").fetchall()
+            return render_template("home.html",books=session["books"])
 
     elif request.method=="POST":
         session["email"]=request.form.get("email")
@@ -49,9 +60,34 @@ def home():
         cred=db.execute("SELECT id FROM users WHERE email = :email AND password = :pw",
         {"email": session["email"], "pw": session["pw"]}).fetchone()
         if cred is None:
+            session["invalid_cred"]=1
             return redirect("/")
         else:
-            return f"<h1>Hello!</h1>"
+            session["user_id"] = cred
+            session["login_success"] = 1
+            session["books"]=db.execute("SELECT * FROM books ORDER BY title asc LIMIT 20").fetchall()
+            return render_template("home.html",books=session["books"])
+
+@app.route("/home/<int:page_num>")
+def home_page_num(page_num):
+    if session.get("login_success") is None:
+        return redirect("/")
+    elif session["login_success"] == 1:
+        page = 20 * page_num
+        session["books"]=db.execute("SELECT * FROM books ORDER BY title asc LIMIT 20 OFFSET :page",
+        {"page": page}).fetchall()
+        return render_template("home.html",books=session["books"])
+
+@app.route("/search",methods=["POST"])
+def search():
+    search_word = request.form.get('search')
+    search_word = "%" + search_word + "%"
+    search_word
+    search_results = db.execute("SELECT * FROM books WHERE UPPER(title) LIKE UPPER(:search_word)"
+    " OR UPPER(author) LIKE UPPER(:search_word)"
+    " OR UPPER(isbn) LIKE UPPER(:search_word)",
+    {"search_word": search_word}).fetchall()
+    return render_template("home.html",books=search_results)
 
 @app.route("/signup",methods=["POST","GET"])
 def new_user():
@@ -83,7 +119,7 @@ def new_user():
                 session["keycode"] = ''.join(secrets.choice(alphabet) for i in range(8))
                 s = smtplib.SMTP('smtp.gmail.com', 587)
                 s.starttls()
-                s.login("EMAIL@gmail.com", "PASSWORD")
+                s.login("EMAIL@gmail.com", "PW")
                 s.sendmail("EMAIL@gmail.com", session["email"], session["keycode"])
                 s.quit()
                 error="Please enter the Security Code that was sent on your email."
@@ -91,3 +127,8 @@ def new_user():
         else:
             error="Email ID already registered"
             return render_template("signup.html",error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
