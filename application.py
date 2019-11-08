@@ -78,16 +78,18 @@ def home_page_num(page_num):
         {"page": page}).fetchall()
         return render_template("home.html",books=session["books"])
 
-@app.route("/search",methods=["POST"])
+@app.route("/search")
 def search():
-    search_word = request.form.get('search')
+    if session.get("login_success") is None:
+        return redirect("/")
+    search_word = request.args.get('search')
     search_word = "%" + search_word + "%"
-    search_word
     search_results = db.execute("SELECT * FROM books WHERE UPPER(title) LIKE UPPER(:search_word)"
     " OR UPPER(author) LIKE UPPER(:search_word)"
     " OR UPPER(isbn) LIKE UPPER(:search_word)",
     {"search_word": search_word}).fetchall()
     return render_template("home.html",books=search_results)
+
 
 @app.route("/signup",methods=["POST","GET"])
 def new_user():
@@ -127,6 +129,12 @@ def new_user():
         else:
             error="Email ID already registered"
             return render_template("signup.html",error=error)
+
+@app.route("/book/<string:book_isbn>")
+def book(book_isbn):
+    book = db.execute("SELECT * FROM books WHERE isbn = :search_word",
+    {"search_word": book_isbn}).fetchone()
+    return render_template("book.html",book=book)
 
 @app.route("/logout")
 def logout():
