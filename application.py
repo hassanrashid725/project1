@@ -1,6 +1,6 @@
 import os, re, smtplib, string, secrets
 
-from flask import Flask, session, render_template, request, redirect
+from flask import Flask, session, render_template, request, redirect, url_for
 from flask_session import Session
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
@@ -57,13 +57,12 @@ def home():
     elif request.method=="POST":
         session["email"]=request.form.get("email")
         session["pw"]=request.form.get("password")
-        cred=db.execute("SELECT id FROM users WHERE email = :email AND password = :pw",
+        session["user_id"]=db.execute("SELECT id FROM users WHERE email = :email AND password = :pw",
         {"email": session["email"], "pw": session["pw"]}).fetchone()
-        if cred is None:
+        if session["user_id"] is None:
             session["invalid_cred"]=1
             return redirect("/")
         else:
-            session["user_id"] = cred
             session["login_success"] = 1
             session["books"]=db.execute("SELECT * FROM books ORDER BY title asc LIMIT 20").fetchall()
             return render_template("home.html",books=session["books"])
@@ -130,11 +129,46 @@ def new_user():
             error="Email ID already registered"
             return render_template("signup.html",error=error)
 
-@app.route("/book/<string:book_isbn>")
+@app.route("/book/<string:book_isbn>",methods=["GET","POST"])
 def book(book_isbn):
+    if session.get("login_success") is None:
+        return redirect("/")
     book = db.execute("SELECT * FROM books WHERE isbn = :search_word",
     {"search_word": book_isbn}).fetchone()
-    return render_template("book.html",book=book)
+    reviews = db.execute("SELECT rating,comment,email FROM reviews JOIN users ON reviews.user_id = users.id "
+    "JOIN books ON reviews.book_id = books.id "
+    "WHERE books.isbn = :book_isbn",
+    {"book_isbn": book_isbn}).fetchall()
+    avg_rat = db.execute("SELECT to_char(AVG(rating),'99999999999999999D99') FROM reviews JOIN users ON reviews.user_id = users.id "
+    "JOIN books ON reviews.book_id = books.id "
+    "WHERE books.isbn = :book_isbn",
+    {"book_isbn": book_isbn}).fetchone()
+    error=""
+    if request.method=="POST":
+        session["user_review"] = request.form.get("user_review")
+        session["user_rating"] = request.form.get("user_rating")
+        if len(session["user_review"]) == 0 or session.get("user_rating") is None:
+            error = "Please submit both review and rating."
+            return render_template("book.html",book=book,reviews=reviews,avg_rat=avg_rat[0], error=error)
+        if ord(session["user_review"][0]) == 32:
+            error = "Please submit both review and rating."
+            return render_template("book.html",book=book,reviews=reviews,avg_rat=avg_rat[0], error=error)
+        check_review = db.execute("SELECT comment FROM reviews JOIN users ON reviews.user_id = users.id "
+        "JOIN books ON reviews.book_id = books.id "
+        "WHERE books.isbn = :book_isbn AND users.id = :user_id",
+        {"book_isbn": book_isbn, "user_id": session["user_id"][0]}).fetchone()
+        if check_review is not None:
+            error="You have already submitted a review for this book."
+            return render_template("book.html",book=book,reviews=reviews,avg_rat=avg_rat[0], error=error)
+        elif check_review is None:
+            db.execute("INSERT INTO reviews (user_id, book_id, comment, rating) VALUES "
+            "(:user_id, :book_id, :comment, :rating)",
+            {"user_id": session["user_id"][0], "book_id": book.id,"comment": session["user_review"],"rating": session["user_rating"]})
+            db.commit()
+            return redirect(url_for('book',book_isbn=book.isbn))
+
+    return render_template("book.html",book=book,reviews=reviews,avg_rat=avg_rat[0], error=error)
+
 
 @app.route("/logout")
 def logout():
